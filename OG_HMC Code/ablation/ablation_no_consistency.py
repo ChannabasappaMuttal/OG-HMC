@@ -1,0 +1,286 @@
+# ============================================================
+# ABLATION A5 — HierFashion without Consistency Loss Term
+# Full model intact — only L_consistency removed from CHL
+# CHL = L_bce + lambda_path * L_path   (no consistency)
+# Tests: "How much does parent-child consistency loss contribute?"
+# ============================================================
+
+import os
+import sys
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.loggers import CSVLogger
+from torch.utils.data import DataLoader
+from torch_geometric.nn import GATConv
+from torch_geometric.utils import dense_to_sparse
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from core.common import (
+    make_train_val_split,
+    ResNet50Backbone, FashionDataset,
+    evaluate_hierarchical, compute_pos_weights, build_adjacency_matrix,
+     get_logger, load_hierarchy,
+    TRAIN_IMAGES, VAL_IMAGES, TRAIN_ANN, VAL_ANN,
+    TRAIN_TRANSFORM, VAL_TRANSFORM, BATCH_SIZE, LR, EPOCHS, PATIENCE,
+    NUM_WORKERS, analyze_model
+)
+
+logger = get_logger("ablation_no_consistency")
+
+
+# ── Loss: CHL without consistency term ───────────────────────
+class CHL_NoConsistency(nn.Module):
+    """BCE (with focal for attrs) + path coherence — NO consistency term."""
+
+    def __init__(self, pos_weight_cat=None, pos_weight_sub=None,
+                 pos_weight_group=None, lambda_path=0.05,
+                 gamma=2.0, alpha=0.25, label_smoothing=0.05):
+        super().__init__()
+        self.lambda_path    = lambda_path
+        self.label_smoothing = label_smoothing
+        self.gamma          = gamma
+        self.alpha          = alpha
+        self.bce_cat        = nn.BCEWithLogitsLoss(pos_weight=pos_weight_cat)
+        self.bce_sub        = nn.BCEWithLogitsLoss(pos_weight=pos_weight_sub)
+        self.bce_group      = nn.BCEWithLogitsLoss(pos_weight=pos_weight_group)
+
+    def _smooth(self, t):
+        return t * (1 - self.label_smoothing) + 0.5 * self.label_smoothing
+
+    def _focal(self, logits, targets):
+        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+        pt  = torch.sigmoid(logits) * targets + (1 - torch.sigmoid(logits)) * (1 - targets)
+        w   = self.alpha * (1 - pt) ** self.gamma
+        return (w * bce).mean()
+
+    def forward(self, predictions, targets, return_components=False):
+        L_cat   = self.bce_cat(predictions["categories"],    self._smooth(targets["categories"].float()))
+        L_sub   = self.bce_sub(predictions["subcategories"], self._smooth(targets["subcategories"].float()))
+        L_group = self.bce_group(predictions["attr_groups"], self._smooth(targets["attr_groups"].float()))
+        L_attr  = self._focal(predictions["attributes"],     self._smooth(targets["attributes"].float()))
+        L_bce   = (L_cat + L_sub + L_group + L_attr) / 4
+
+        cat_p   = torch.sigmoid(predictions["categories"])
+        att_p   = torch.sigmoid(predictions["attributes"])
+        L_path  = torch.mean((att_p.mean(1) - cat_p.mean(1)) ** 2)
+
+        # ❌ NO consistency term
+        zero    = torch.tensor(0.0, device=L_bce.device)
+        CHL     = L_bce + self.lambda_path * L_path
+
+        if return_components:
+            return CHL, L_bce, zero, L_path
+        return CHL
+
+
+# ── Reuse full architecture blocks ───────────────────────────
+
+class Phase2LabelGraphModule(nn.Module):
+    def __init__(self, num_nodes, adj_matrix, embed_dim=300, out_dim=512):
+        super().__init__()
+        self.node_embeddings = nn.Parameter(torch.randn(num_nodes, embed_dim))
+        # N2: L2-normalise rows at init to prevent exploding GAT inputs
+        nn.init.xavier_uniform_(self.node_embeddings.data.unsqueeze(0))
+        self.node_embeddings.data = self.node_embeddings.data.squeeze(0)
+        with torch.no_grad():
+            norms = self.node_embeddings.data.norm(dim=1, keepdim=True).clamp(min=1e-8)
+            self.node_embeddings.data.div_(norms)
+        edge_index, _ = dense_to_sparse(adj_matrix)
+        self.register_buffer("edge_index", edge_index)
+        self.gat1  = GATConv(embed_dim, 64, heads=8, dropout=0.1)
+        self.gat2  = GATConv(512, out_dim, heads=1, dropout=0.1)
+        self.norm1 = nn.LayerNorm(512)
+        self.norm2 = nn.LayerNorm(out_dim)
+
+    def forward(self):
+        # N1: force fp32 for GAT (AMP fp16 + sparse softmax = NaN)
+        with torch.amp.autocast("cuda", enabled=False):
+            x  = self.node_embeddings.float()
+            ei = self.edge_index
+            x  = self.norm1(F.elu(self.gat1(x, ei)))
+            x  = self.norm2(self.gat2(x, ei))
+        return x
+
+
+class LabelGuidedSpatialAttention(nn.Module):
+    def __init__(self, visual_dim=2048, label_dim=512, num_labels=363):
+        super().__init__()
+        self.num_labels = num_labels
+        self.label_proj = nn.Linear(label_dim, visual_dim)
+        self.norm       = nn.LayerNorm(visual_dim)
+        nn.init.xavier_uniform_(self.label_proj.weight)
+
+    def forward(self, feature_maps, label_embeddings):
+        B, C, H, W = feature_maps.shape
+        # N3: fp32 + clamp to prevent inf softmax weights under AMP
+        with torch.amp.autocast("cuda", enabled=False):
+            fmaps_fp32 = feature_maps.float()
+            proj       = self.label_proj(label_embeddings.float())
+            scores     = torch.einsum("bchw,nc->bnhw", fmaps_fp32, proj)
+            scores     = torch.clamp(scores, min=-50.0, max=50.0)
+            w          = F.softmax(scores.view(B, self.num_labels, -1), dim=-1).view(B, self.num_labels, H, W)
+            out        = self.norm(torch.einsum("bnhw,bchw->bnc", w, fmaps_fp32).mean(dim=1))
+        return out.to(feature_maps.dtype)
+
+
+class CrossAttentionFusion(nn.Module):
+    def __init__(self, visual_dim=2048, graph_dim=512, hidden_dim=512, num_heads=8):
+        super().__init__()
+        self.visual_proj = nn.Linear(visual_dim, hidden_dim)
+        self.graph_proj  = nn.Linear(graph_dim, hidden_dim)
+        self.attn        = nn.MultiheadAttention(hidden_dim, num_heads, dropout=0.1, batch_first=True)
+        self.out_proj    = nn.Linear(hidden_dim, hidden_dim)
+        self.norm        = nn.LayerNorm(hidden_dim)
+
+    def forward(self, visual, graph_nodes):
+        B = visual.size(0)
+        # N4: fp32 for cross-attention (stable under AMP)
+        with torch.amp.autocast("cuda", enabled=False):
+            q = self.visual_proj(visual.float()).unsqueeze(1)
+            k = self.graph_proj(graph_nodes.float()).unsqueeze(0).expand(B, -1, -1)
+            o, _ = self.attn(q, k, k)
+            out = self.norm(self.out_proj(o.squeeze(1)))
+        return out.to(visual.dtype)
+
+
+class HierarchicalPredictionHeads(nn.Module):
+    def __init__(self, hierarchy):
+        super().__init__()
+        self.shared = nn.Sequential(
+            nn.Linear(1024, 1024), nn.BatchNorm1d(1024), nn.ReLU(), nn.Dropout(0.3),
+            nn.Linear(1024, 512),  nn.BatchNorm1d(512),  nn.ReLU(), nn.Dropout(0.2),
+        )
+        self.category_head    = nn.Linear(512, hierarchy.num_categories)
+        self.subcategory_head = nn.Linear(512, hierarchy.num_subcategories)
+        self.group_head       = nn.Linear(512, hierarchy.num_attr_groups)
+        self.attribute_head   = nn.Sequential(
+            nn.Linear(512, 768), nn.ReLU(), nn.Dropout(0.25),
+            nn.Linear(768, 512), nn.ReLU(), nn.Dropout(0.20),
+            nn.Linear(512, hierarchy.num_attributes),
+        )
+
+    def forward(self, x):
+        x = self.shared(x)
+        return {"categories": self.category_head(x), "subcategories": self.subcategory_head(x),
+                "attr_groups": self.group_head(x), "attributes": self.attribute_head(x)}
+
+
+class AblationNoConsistencyLightning(pl.LightningModule):
+
+    def __init__(self, hierarchy, adj_matrix, pos_weight, learning_rate=LR):
+        super().__init__()
+        self.save_hyperparameters(ignore=["hierarchy", "adj_matrix", "pos_weight"])
+        self.lr = learning_rate
+
+        self.backbone          = ResNet50Backbone()
+        self.graph_module      = Phase2LabelGraphModule(hierarchy.num_nodes, adj_matrix)
+        self.label_guided_attn = LabelGuidedSpatialAttention(2048, 512, hierarchy.num_nodes)
+        self.cross_attention   = CrossAttentionFusion(2048, 512, 512, 8)
+        self.visual_proj       = nn.Sequential(nn.Linear(2048, 512), nn.ReLU(), nn.Dropout(0.2))
+        self.heads             = HierarchicalPredictionHeads(hierarchy)
+        self.loss_fn           = CHL_NoConsistency(
+            pos_weight_cat=pos_weight["categories"],
+            pos_weight_sub=pos_weight["subcategories"],
+            pos_weight_group=pos_weight["attr_groups"],
+        )
+        # N5: corrected group→attr mask (old cat→attr was all-ones → recall collapse)
+        num_groups = hierarchy.num_attr_groups
+        num_attrs  = hierarchy.num_attributes
+        grp_attr_mask = torch.zeros(num_groups, num_attrs)
+        for group_name, attr_ids in hierarchy.level_3.items():
+            g_idx = hierarchy.group_id_to_idx.get(group_name)
+            if g_idx is None: continue
+            for attr_id in attr_ids:
+                a_idx = hierarchy.attribute_id_to_idx.get(str(attr_id))
+                if a_idx is not None: grp_attr_mask[g_idx, a_idx] = 1.0
+        self.register_buffer("grp_attr_mask", grp_attr_mask)
+
+    def forward(self, images, targets=None):
+        fmaps, _        = self.backbone(images)
+        graph_nodes     = self.graph_module()
+        attended_visual = self.label_guided_attn(fmaps, graph_nodes)
+        visual_512      = self.visual_proj(attended_visual)
+        cross_feat      = self.cross_attention(attended_visual, graph_nodes)
+        fused           = torch.cat([visual_512, cross_feat], dim=1)
+        predictions     = self.heads(fused)
+        # N6: gate attrs by GROUP predictions (not category)
+        grp_probs = torch.sigmoid(predictions["attr_groups"])
+        allowed   = torch.matmul((grp_probs > 0.3).float(), self.grp_attr_mask).clamp(0, 1)
+        has_group = (allowed.sum(dim=1, keepdim=True) > 0).float()
+        gate      = has_group * allowed + (1 - has_group)
+        predictions["attributes"] = predictions["attributes"] * gate
+        if targets is not None:
+            return predictions, self.loss_fn(predictions, targets)
+        return predictions
+
+    def training_step(self, batch, _):
+        x, t = batch; _, loss = self(x, t)
+        self.log("train_loss", loss, prog_bar=True, on_epoch=True, on_step=False); return loss
+
+    def validation_step(self, batch, _):
+        x, t = batch; _, loss = self(x, t)
+        self.log("val_loss", loss, prog_bar=True, on_epoch=True, on_step=False); return loss
+
+    def configure_optimizers(self):
+        opt   = torch.optim.AdamW(self.parameters(), lr=self.lr, weight_decay=1e-4)
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS)
+        return {"optimizer": opt, "lr_scheduler": sched}
+
+
+if __name__ == "__main__":
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    hierarchy, hj = load_hierarchy()
+    adj = build_adjacency_matrix(hierarchy, hj)
+
+    # ── 80/20 internal train/val split from train2020 ──────
+    train_subset, val_subset = make_train_val_split(
+        annotation_file=TRAIN_ANN, image_dir=TRAIN_IMAGES,
+        hierarchy=hierarchy, train_transform=TRAIN_TRANSFORM,
+        val_transform=VAL_TRANSFORM, val_fraction=0.20, seed=42,
+    )
+    # ── Test set = full val2020 — never seen during training ─
+    test_ds  = FashionDataset(VAL_IMAGES, VAL_ANN, hierarchy, VAL_TRANSFORM)
+
+    train_dl = DataLoader(train_subset, BATCH_SIZE, shuffle=True,
+                          num_workers=NUM_WORKERS, pin_memory=True)
+    val_dl   = DataLoader(val_subset,   BATCH_SIZE, shuffle=False,
+                          num_workers=NUM_WORKERS, pin_memory=True)
+    test_dl  = DataLoader(test_ds,      BATCH_SIZE, shuffle=False,
+                          num_workers=NUM_WORKERS, pin_memory=True)
+
+    pos_weight = compute_pos_weights(train_dl, hierarchy, device)
+    model = AblationNoConsistencyLightning(hierarchy, adj, pos_weight)
+    analyze_model(model, device)
+
+    ckpt_cb = ModelCheckpoint(
+        monitor="val_loss", mode="min", save_top_k=1,
+        dirpath="checkpoints/ablation_no_consistency",
+        filename="ablation_no_consistency-{epoch:02d}-{val_loss:.4f}"
+    )
+    trainer = pl.Trainer(
+        max_epochs=EPOCHS,
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        devices=1,
+        precision="16-mixed" if torch.cuda.is_available() else 32,
+        gradient_clip_val=1.0,
+        callbacks=[ckpt_cb,
+                   EarlyStopping(monitor="val_loss", mode="min",
+                                 patience=PATIENCE)],
+        logger=CSVLogger("training_logs", name="Ablation_NoConsistency"),
+    )
+    trainer.fit(model, train_dl, val_dl)
+
+    # ── Load best checkpoint before test evaluation ─────────
+    best_ckpt = ckpt_cb.best_model_path
+    if best_ckpt:
+        model = AblationNoConsistencyLightning.load_from_checkpoint(best_ckpt, hierarchy=hierarchy, adj_matrix=adj, pos_weight=pos_weight)
+        model.to(device)
+
+    os.makedirs("results", exist_ok=True)
+    evaluate_hierarchical(model, test_dl, device, model.loss_fn,
+                          save_path="results/ablation_no_consistency_test_results.csv")

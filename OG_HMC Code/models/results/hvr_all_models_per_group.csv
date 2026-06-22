@@ -1,0 +1,105 @@
+Model,Group,n_attrs,Macro_F1,Micro_F1,mAP
+CNNFlat,nickname,153,0.0313,0.0335,0.1246
+CNNFlat,silhouette,25,0.1505,0.1904,0.2489
+CNNFlat,waistline,7,0.2697,0.3021,0.3717
+CNNFlat,length,15,0.2256,0.2421,0.4311
+CNNFlat,neckline type,25,0.0588,0.0613,0.0997
+CNNFlat,opening type,10,0.1479,0.1722,0.2721
+CNNFlat,non textile material type,10,0.1188,0.1877,0.1891
+CNNFlat,leather,4,0.0026,0.0026,0.0043
+CNNFlat,textile finishing manufacturing techniques,21,0.104,0.1257,0.215
+CNNFlat,textile pattern,18,0.0986,0.1339,0.1412
+CNNFlat,animal,6,0.0054,0.0055,0.1062
+CNNFlat,nickname group,153,0.0313,0.0335,0.1246
+CNNFlat,non nickname groups,141,0.1218,0.15,0.2135
+CNNHier,nickname,153,0.0314,0.0335,0.0894
+CNNHier,silhouette,25,0.1505,0.1905,0.1954
+CNNHier,waistline,7,0.2697,0.3021,0.3218
+CNNHier,length,15,0.226,0.2424,0.3902
+CNNHier,neckline type,25,0.0588,0.0613,0.0645
+CNNHier,opening type,10,0.148,0.1724,0.2643
+CNNHier,non textile material type,10,0.1188,0.1877,0.1548
+CNNHier,leather,4,0.0026,0.0026,0.0057
+CNNHier,textile finishing manufacturing techniques,21,0.104,0.1258,0.1818
+CNNHier,textile pattern,18,0.0987,0.134,0.1194
+CNNHier,animal,6,0.0055,0.0055,0.0673
+CNNHier,nickname group,153,0.0314,0.0335,0.0894
+CNNHier,non nickname groups,141,0.1219,0.1501,0.1786
+CNNGAT,nickname,153,0.0313,0.0335,0.0729
+CNNGAT,silhouette,25,0.1505,0.1904,0.1667
+CNNGAT,waistline,7,0.2697,0.3021,0.2955
+CNNGAT,length,15,0.2256,0.2421,0.3397
+CNNGAT,neckline type,25,0.0588,0.0613,0.0499
+CNNGAT,opening type,10,0.1479,0.1722,0.2495
+CNNGAT,non textile material type,10,0.1188,0.1877,0.1234
+CNNGAT,leather,4,0.0026,0.0026,0.0041
+CNNGAT,textile finishing manufacturing techniques,21,0.104,0.1257,0.148
+CNNGAT,textile pattern,18,0.0986,0.1339,0.0972
+CNNGAT,animal,6,0.0054,0.0055,0.0314
+CNNGAT,nickname group,153,0.0313,0.0335,0.0729
+CNNGAT,non nickname groups,141,0.1218,0.15,0.1516
+MLGCN,nickname,153,0.0315,0.0335,0.1049
+MLGCN,silhouette,25,0.1507,0.1907,0.1996
+MLGCN,waistline,7,0.2698,0.3022,0.3166
+MLGCN,length,15,0.2271,0.2434,0.4103
+MLGCN,neckline type,25,0.0589,0.0613,0.0727
+MLGCN,opening type,10,0.1481,0.1725,0.2722
+MLGCN,non textile material type,10,0.1188,0.1879,0.1656
+MLGCN,leather,4,0.0026,0.0026,0.0115
+MLGCN,textile finishing manufacturing techniques,21,0.104,0.1257,0.1916
+MLGCN,textile pattern,18,0.0987,0.1341,0.142
+MLGCN,animal,6,0.0055,0.0055,0.124
+MLGCN,nickname group,153,0.0315,0.0335,0.1049
+MLGCN,non nickname groups,141,0.122,0.1502,0.191
+Q2L,nickname,153,0.0313,0.0335,0.0358
+Q2L,silhouette,25,0.1505,0.1904,0.1298
+Q2L,waistline,7,0.2697,0.3021,0.2197
+Q2L,length,15,0.2256,0.2421,0.194
+Q2L,neckline type,25,0.0588,0.0613,0.0328
+Q2L,opening type,10,0.1479,0.1722,0.163
+Q2L,non textile material type,10,0.1188,0.1877,0.1153
+Q2L,leather,4,0.0026,0.0026,0.0032
+Q2L,textile finishing manufacturing techniques,21,0.104,0.1257,0.1031
+Q2L,textile pattern,18,0.0986,0.1339,0.0894
+Q2L,animal,6,0.0054,0.0055,0.0313
+Q2L,nickname group,153,0.0313,0.0335,0.0358
+Q2L,non nickname groups,141,0.1218,0.15,0.1083
+ResNetASL,nickname,153,0.0313,0.0335,0.0171
+ResNetASL,silhouette,25,0.1505,0.1904,0.1053
+ResNetASL,waistline,7,0.2697,0.3021,0.1778
+ResNetASL,length,15,0.2256,0.2421,0.1377
+ResNetASL,neckline type,25,0.0588,0.0613,0.0317
+ResNetASL,opening type,10,0.1479,0.1722,0.0941
+ResNetASL,non textile material type,10,0.1188,0.1877,0.1035
+ResNetASL,leather,4,0.0026,0.0026,0.0013
+ResNetASL,textile finishing manufacturing techniques,21,0.104,0.1257,0.0671
+ResNetASL,textile pattern,18,0.0986,0.1339,0.072
+ResNetASL,animal,6,0.0054,0.0055,0.0031
+ResNetASL,nickname group,153,0.0313,0.0335,0.0171
+ResNetASL,non nickname groups,141,0.1218,0.15,0.0811
+TResNet,nickname,153,0.0314,0.0336,0.0828
+TResNet,silhouette,25,0.1505,0.1906,0.1886
+TResNet,waistline,7,0.2697,0.3021,0.2966
+TResNet,length,15,0.2259,0.2423,0.3774
+TResNet,neckline type,25,0.0589,0.0613,0.0603
+TResNet,opening type,10,0.148,0.1726,0.2604
+TResNet,non textile material type,10,0.1188,0.1879,0.2621
+TResNet,leather,4,0.0026,0.0026,0.0035
+TResNet,textile finishing manufacturing techniques,21,0.104,0.1258,0.177
+TResNet,textile pattern,18,0.0987,0.1341,0.1151
+TResNet,animal,6,0.0055,0.0055,0.0587
+TResNet,nickname group,153,0.0314,0.0336,0.0828
+TResNet,non nickname groups,141,0.1219,0.1502,0.1797
+ViTMLC,nickname,153,0.0313,0.0335,0.081
+ViTMLC,silhouette,25,0.1505,0.1904,0.1934
+ViTMLC,waistline,7,0.2697,0.3021,0.3076
+ViTMLC,length,15,0.2258,0.2423,0.375
+ViTMLC,neckline type,25,0.0588,0.0613,0.0604
+ViTMLC,opening type,10,0.148,0.1723,0.2489
+ViTMLC,non textile material type,10,0.1188,0.1877,0.1545
+ViTMLC,leather,4,0.0026,0.0026,0.0049
+ViTMLC,textile finishing manufacturing techniques,21,0.104,0.1257,0.1854
+ViTMLC,textile pattern,18,0.0987,0.134,0.1328
+ViTMLC,animal,6,0.0055,0.0055,0.0387
+ViTMLC,nickname group,153,0.0313,0.0335,0.081
+ViTMLC,non nickname groups,141,0.1218,0.15,0.1751
